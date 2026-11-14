@@ -25,49 +25,29 @@ This distinction matters: a command being accepted is not proof that a fault is 
 
 ---
 
-## Issue 1 — R1–R2 serial link clocking
+## Initial configuration — R1–R2 serial link
 
-### Symptom
-
-The R1–R2 serial connection required clocking on the DCE end. A serial interface can have correct IP addressing and still fail to operate correctly if the DCE side does not provide clocking.
-
-### Evidence
-
-I used the controller output to identify which side of the serial cable was DCE:
+This was part of the lab's initial configuration, **not a troubleshooting fault**. I identified the DCE end of the R1–R2 serial connection and configured the required clock rate on R1.
 
 ```cisco
 show controllers serial 0/0/0
+
+interface serial 0/0/0
+ clock rate 128000
 ```
 
-The output identified R1 as the DCE side. This matters because the clock rate is configured on the DCE end, not arbitrarily on both routers.
-
-I also checked interface status and serial-interface details:
+I then checked the interface status and serial details:
 
 ```cisco
 show ip interface brief
 show interfaces serial 0/0/0
 ```
 
-### Root cause
-
-The serial connection needed the required clock rate configured on its DCE end. The DCE/DTE role was established from the controller output rather than guessed.
-
-### Correction
-
-On R1, the DCE router, I configured the required clock rate:
-
-```cisco
-interface serial 0/0/0
- clock rate 128000
-```
-
-### Verification
-
-I checked the serial interface state and details again with `show ip interface brief` and `show interfaces serial 0/0/0`. The important checks are that the interface is up/up and that the link has the expected addressing and line protocol state.
+This is recorded as a setup/configuration step and is not counted as one of the troubleshooting incidents below.
 
 ---
 
-## Issue 2 — Missing OSPF route to 10.0.2.0/24
+## Troubleshooting issue 1 — Missing OSPF route to 10.0.2.0/24
 
 ### Symptom
 
@@ -126,7 +106,7 @@ I checked that R3 reported the intended point-to-point network type, that the OS
 
 ---
 
-## Issue 3 — OSPF neighbor adjacency failure caused by timer mismatch
+## Troubleshooting issue 2 — OSPF neighbor adjacency failure caused by timer mismatch
 
 ### Symptom
 
@@ -187,7 +167,7 @@ show ip ospf interface
 
 ---
 
-## Issue 4 — Default route not available to the internal OSPF routers
+## Troubleshooting issue 3 — Default route not available to the internal OSPF routers
 
 ### Symptom
 
@@ -253,7 +233,7 @@ The `O*E2 0.0.0.0/0` entry confirms that the default route was learned through O
 
 ---
 
-## Issue 5 — Inspecting the OSPF link-state database
+## Additional verification — Inspecting the OSPF link-state database
 
 ### Objective
 
@@ -285,11 +265,10 @@ This helped connect three pieces of evidence: the route configured at the edge, 
 
 ---
 
-## Summary — Fault isolation and verification
+## Summary — Troubleshooting fault isolation and verification
 
 | Issue | Evidence that isolated the fault | Root cause | Correction | Verification |
 |---|---|---|---|---|
-| R1–R2 serial link clocking | `show controllers serial` identified R1 as DCE | Required DCE clocking on the serial link | Set clock rate 128000 on R1's DCE interface | Serial interface status and line protocol |
 | Missing 10.0.2.0/24 route | OSPF interface outputs showed BROADCAST on R3 and POINT-TO-POINT on the connected R4 end | OSPF network-type mismatch | Set R3 F2/0 to POINT-TO-POINT | OSPF interface type, neighbor state, routing table |
 | R5 neighbor adjacency | Hello/Dead values differed: 5/20 versus 10/40 | OSPF timer mismatch | Make timer values 10/40 on both ends | Neighbor state reached FULL |
 | Default route missing internally | Routing table and external LSDB inspection | Edge default route needed to be advertised into OSPF | Static default route plus `default-information originate` on R5 | `O*E2 0.0.0.0/0` learned on R3 |
@@ -299,7 +278,7 @@ This helped connect three pieces of evidence: the route configured at the edge, 
 
 ## Skills practised
 
-- Identifying DCE/DTE roles and configuring serial clocking
+- Initial serial DCE/DTE identification and clock-rate configuration
 - Comparing interface and OSPF settings across both ends of a link
 - Troubleshooting OSPF network-type mismatches
 - Diagnosing Hello/Dead timer mismatches
@@ -378,4 +357,4 @@ The screenshots are listed in capture-time order. They provide the original topo
 
 ## Key takeaway
 
-The main lesson from this lab was to troubleshoot from evidence instead of guessing. I checked the physical/interface layer, compared OSPF settings on both ends of links, verified neighbor formation, checked the routing table, and then inspected the LSDB. Each correction was followed by a verification step to confirm the expected behavior.
+The R1–R2 serial clock-rate work was an initial configuration task, not a fault investigation. The actual troubleshooting focused on the missing OSPF route, the neighbor timer mismatch, and default-route distribution. I used interface and OSPF outputs to isolate the causes, applied targeted corrections, and verified the results through neighbor state, routing-table entries, and LSDB contents.
