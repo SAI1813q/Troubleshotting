@@ -1,247 +1,256 @@
 # OSPF Multi-Router Troubleshooting Lab
 
-A hands-on Cisco Packet Tracer troubleshooting exercise involving a five-router OSPF network, serial and Ethernet links, internal LANs, and an ISP-facing connection.
+A Cisco Packet Tracer troubleshooting lab involving five internal routers (R1–R5), two user LANs, an Ethernet transit network, a shared router segment, serial connectivity, and an ISP-facing link.
 
-The purpose of this lab was not simply to enter configuration commands. I worked through the faults by identifying the symptom, collecting evidence from the routers, isolating the root cause, applying the smallest relevant correction, and checking whether the expected behavior returned.
+This write-up separates the lab's initial configuration from the faults that were actually investigated. The troubleshooting sections use **symptom → evidence → root cause → correction → verification**, with cropped CLI screenshots placed beside the explanation so the reader can follow the investigation and see the router-generated syslog messages.
 
 - **Platform:** Cisco Packet Tracer
-- **Routing protocol:** OSPF
-- **Routers:** R1–R5, plus the ISP-facing router shown in the topology
-- **Evidence:** [All troubleshooting screenshots](./Photos/)
+- **Routing protocol:** OSPF, Process ID 1, Area 0
+- **Main transit networks:** 192.168.34.0/30 and 192.168.245.0/29
+- **External test destination:** 8.8.8.8
+- **Evidence:** Cropped, relevant screenshots are embedded below and stored in [Photos](./Photos/).
 
 ---
 
-## Troubleshooting methodology
+## 1. Lab topology and initial setup
 
-Each issue is documented using the same sequence:
+![Lab topology and task description](./Photos/Screenshot%202026-11-14%20170829.png)
 
-1. **Symptom** — What was failing or behaving unexpectedly?
-2. **Evidence** — Which commands or outputs helped narrow it down?
-3. **Root cause** — What specific configuration or network condition caused the issue?
-4. **Correction** — What was changed, and on which device/interface?
-5. **Verification** — What output confirmed that the correction worked?
+The supplied topology already contained IP addressing and OSPF configuration. The first task was to add the R1–R2 serial connection, configure its serial interfaces, and establish OSPF across the new link. This was an initial setup task, not a fault found during troubleshooting.
 
-This distinction matters: a command being accepted is not proof that a fault is fixed. The verification step must show the expected network behavior.
+### R1–R2 serial setup
 
----
+![R1 serial interface and DCE controller output](./Photos/Screenshot%202026-11-14%20171141.png)
 
-## Initial configuration — R1–R2 serial link
-
-This was part of the lab's initial configuration, **not a troubleshooting fault**. I identified the DCE end of the R1–R2 serial connection and configured the required clock rate on R1.
+The controller output identified R1 Serial0/0/0 as the DCE end. I configured the requested clock rate of 128000 on that DCE interface, enabled the interface, and configured the serial IP address.
 
 ```cisco
 show controllers serial 0/0/0
 
 interface serial 0/0/0
+ no shutdown
+ ip address 192.168.12.1 255.255.255.252
  clock rate 128000
 ```
 
-I then checked the interface status and serial details:
+The R2 screenshot shows the serial interface configured with 192.168.12.2/30 and an OSPF adjacency message reaching FULL. This confirms the newly added serial connection was brought into OSPF.
 
-```cisco
-show ip interface brief
-show interfaces serial 0/0/0
-```
-
-This is recorded as a setup/configuration step and is not counted as one of the troubleshooting incidents below.
+![R2 serial interface and OSPF neighbor reaching FULL](./Photos/Screenshot%202026-11-14%20171713.png)
 
 ---
 
-## Troubleshooting issue 1 — Missing OSPF route to 10.0.2.0/24
+# 2. Troubleshooting issue 1 — The 10.0.2.0/24 LAN was not being learned by the other routers
 
-### Symptom
+## Symptom
 
-The expected route to **10.0.2.0/24** was not appearing in the routing information where it was needed. The investigation therefore focused on the OSPF link connecting the routers, rather than immediately adding a static route.
+The lab stated that only R3 had a route to **10.0.2.0/24**. R3 is directly connected to this LAN, so it naturally has a connected route. The problem was that the other routers were not learning the LAN route through OSPF as expected.
 
-### Evidence
+The relevant path is R3–R4 over the **192.168.34.0/30** transit link. R3 connects to the LAN 10.0.2.0/24 on G0/0 and to R4 on G0/1.
 
-I compared the OSPF interface information at both ends of the R3–R4 connection. The outputs showed different OSPF network types:
+## Evidence — Compare the OSPF network type on both ends
 
-| Device/interface | OSPF network type |
-|---|---|
-| R3 FastEthernet 2/0 | BROADCAST |
-| R4 interface connected to R3 | POINT-TO-POINT |
+The R3 output shows that its G0/1 interface, addressed as 192.168.34.1/30, was already operating as **POINT-TO-POINT**. It also shows the R4 neighbor (router ID 192.168.245.2) in FULL state.
 
-The useful checks for this kind of fault are:
+![R3 G0/1 showing POINT-TO-POINT and a FULL neighbor](./Photos/Screenshot%202026-11-14%20173456.png)
+
+The R4 output for G0/1, addressed as 192.168.34.2/30, showed **Network Type BROADCAST**. This was inconsistent with the point-to-point setting on R3's connected interface.
+
+![R4 G0/1 showing BROADCAST before correction](./Photos/Screenshot%202026-11-14%20173537.png)
+
+The useful commands for comparing the two ends are:
 
 ```cisco
-show ip ospf interface
-show ip ospf interface fastethernet 2/0
+show ip ospf interface gigabitEthernet 0/1
 show ip ospf neighbor
 show ip route
 ```
 
-The key evidence was the mismatch between the two ends of the same link.
+## Root cause
 
-### Root cause
+The two ends of the R3–R4 transit link were configured with different OSPF network types:
 
-The OSPF network type on R3 FastEthernet 2/0 did not match the intended point-to-point network type already configured on the connected R4 interface.
+| Router | Interface | IP address | OSPF network type before correction |
+|---|---|---|---|
+| R3 | G0/1 | 192.168.34.1/30 | POINT-TO-POINT |
+| R4 | G0/1 | 192.168.34.2/30 | BROADCAST |
 
-OSPF network type affects how OSPF treats a link. A broadcast network supports DR/BDR election behavior, while a point-to-point network does not use a DR/BDR election on that link. The two ends should be configured consistently for the topology being built.
+A broadcast OSPF network uses DR/BDR election behavior. A point-to-point OSPF network does not elect a DR or BDR on that link. The transit link was intended to operate as point-to-point, so the network type needed to be consistent at both ends.
 
-### Correction
+The LAN route itself was configured for OSPF advertisement on R3. The R3 routing-protocol output shows the 10.0.2.254 host address included in OSPF Area 0 and G0/0 listed as a passive interface. Making the transit adjacency consistent allowed the remote routers to receive the route advertisement.
 
-I changed the OSPF network type on R3 FastEthernet 2/0 from BROADCAST to POINT-TO-POINT so that it matched the connected end:
+## Correction
 
-```cisco
-R3(config)# interface fastethernet 2/0
-R3(config-if)# ip ospf network point-to-point
-```
-
-I did not change R4 for this correction because its connected interface was already using POINT-TO-POINT.
-
-### Verification
-
-After the change, the relevant checks were:
+R3 G0/1 was already set to point-to-point. I changed the connected R4 G0/1 interface from BROADCAST to POINT-TO-POINT:
 
 ```cisco
-show ip ospf interface fastethernet 2/0
-show ip ospf neighbor
-show ip route
+R4(config)# interface gigabitEthernet 0/1
+R4(config-if)# ip ospf network point-to-point
 ```
 
-I checked that R3 reported the intended point-to-point network type, that the OSPF relationship was established as expected, and that the missing network was being learned through routing.
+The cropped R4 CLI screenshot captures the command being entered and the immediate OSPF state change.
 
-**Troubleshooting lesson:** When a route is missing, inspect the OSPF relationship and interface characteristics on both ends of the path before adding routes manually. A routing-table symptom can originate from a link-level or OSPF-interface configuration issue.
+## Verification — Router-generated syslog proves the adjacency recovered
+
+Immediately after the network-type change, the R4 console displayed these OSPF adjacency transitions:
+
+```
+%OSPF-5-ADJCHG: ... from FULL to DOWN
+%OSPF-5-ADJCHG: ... from LOADING to FULL, Loading Done
+```
+
+This sequence is important:
+
+1. **FULL to DOWN:** OSPF reset the existing neighbor relationship when the interface's OSPF network type changed. A brief adjacency reset is expected when changing a live OSPF interface setting.
+2. **LOADING to FULL:** The routers re-established the adjacency and completed link-state database synchronization.
+3. **Loading Done:** The router reported that database loading had completed for that adjacency.
+
+![R4 network-type correction and OSPF syslog transition from FULL to DOWN, then LOADING to FULL](./Photos/Screenshot%202026-11-14%20173537.png)
+
+The R3 output after the change confirms that G0/1 is point-to-point and the neighbor is FULL.
+
+![R3 confirms point-to-point interface and FULL adjacency](./Photos/Screenshot%202026-11-14%20173456.png)
+
+The route table on R5 later shows **10.0.2.0/24** as an OSPF-learned route via 192.168.245.2 (R4). This is stronger proof than checking only R3, because R3's own route to that LAN is directly connected.
+
+![R5 routing table showing 10.0.2.0/24 learned through OSPF](./Photos/Screenshot%202026-11-14%20174159.png)
+
+**Result:** The R3–R4 OSPF link used a consistent point-to-point network type, the adjacency returned to FULL, and a remote router learned the 10.0.2.0/24 route through OSPF.
 
 ---
 
-## Troubleshooting issue 2 — OSPF neighbor adjacency failure caused by timer mismatch
+# 3. Troubleshooting issue 2 — R5 was not forming OSPF adjacencies with R2 and R4
 
-### Symptom
+## Symptom
 
-R5 was not forming the expected OSPF neighbor adjacencies with the connected routers. Without a working adjacency, routers cannot exchange the link-state information needed to build a consistent OSPF database and calculate routes through that neighbor.
+R5 was not forming the expected OSPF neighbor adjacencies on its shared Ethernet segment, 192.168.245.0/29. Without these adjacencies, R5 could not exchange the required link-state information with the connected routers.
 
-### Evidence
+## Evidence — Inspect R5's OSPF interface timers
 
-I checked the neighbor table and the OSPF interface settings:
+I checked the OSPF interface configuration on R5:
 
 ```cisco
+show ip ospf interface gigabitEthernet 0/0
 show ip ospf neighbor
-show ip ospf interface
-show ip protocols
 ```
 
-The OSPF interface output showed a Hello/Dead timer mismatch:
+The R5 G0/0 output showed:
 
-| Router configuration | Hello interval | Dead interval |
+- Interface IP: 192.168.245.3/29
+- OSPF network type: BROADCAST
+- Hello interval: 5 seconds
+- Dead interval: 20 seconds
+- Neighbor count: 0
+
+![R5 before correction showing Hello 5, Dead 20 and no OSPF neighbors](./Photos/Screenshot%202026-11-14%20172354.png)
+
+The connected R4 interface output showed Hello 10 and Dead 40. That gave us a direct comparison between the settings on the shared segment.
+
+![R4 interface showing Hello 10 and Dead 40](./Photos/Screenshot%202026-11-14%20172513.png)
+
+## Root cause
+
+The OSPF Hello and Dead intervals did not match:
+
+| Router/interface | Hello interval | Dead interval |
 |---|---:|---:|
-| R5 (initial setting) | 5 seconds | 20 seconds |
-| Neighboring routers | 10 seconds | 40 seconds |
+| R5 G0/0 — before correction | 5 seconds | 20 seconds |
+| Neighboring OSPF interfaces | 10 seconds | 40 seconds |
 
-OSPF neighbors on a link must agree on the Hello and Dead intervals. The different values were direct evidence of a configuration mismatch.
+OSPF routers on the same link must agree on key Hello parameters, including the Hello and Dead intervals. R5 was sending Hellos using 5/20 while its neighbors expected 10/40. This prevented the expected adjacencies from forming.
 
-### Root cause
+## Correction
 
-R5 was using Hello 5 / Dead 20, while the connected routers were using Hello 10 / Dead 40. Because the timer values did not match, the routers could not establish the expected adjacency.
-
-### Correction
-
-I corrected the affected OSPF interface timer configuration so that R5 and its neighbors used matching values: Hello 10 seconds and Dead 40 seconds.
-
-The interface-level command format is:
+On R5 G0/0, I changed the Hello and Dead intervals to match the neighboring routers:
 
 ```cisco
-interface <connected-interface>
+interface gigabitEthernet 0/0
  ip ospf hello-interval 10
  ip ospf dead-interval 40
 ```
 
-The settings must be consistent on both ends of each affected link.
+## Verification — Syslog shows both neighbors completing database loading
 
-### Verification
+Immediately after the timer correction, R5 displayed OSPF adjacency-change messages for both neighbors:
 
-I checked the neighbor table again:
-
-```cisco
-show ip ospf neighbor
+```
+%OSPF-5-ADJCHG: ... Nbr 192.168.245.1 ... from LOADING to FULL, Loading Done
+%OSPF-5-ADJCHG: ... Nbr 192.168.245.2 ... from LOADING to FULL, Loading Done
 ```
 
-The affected adjacencies progressed to **FULL**. I also used the OSPF interface output to confirm the timer values:
+This is direct device-generated evidence that the two neighbor relationships reached FULL after the timer correction. The **LOADING to FULL** transition means the routers completed OSPF database synchronization for those adjacencies.
 
-```cisco
-show ip ospf interface
-```
+![R5 timer correction and syslog showing both neighbors transition from LOADING to FULL](./Photos/Screenshot%202026-11-14%20172513.png)
 
-**Why FULL matters:** FULL indicates that the neighbors have completed database synchronization for the adjacency. It is stronger evidence than merely seeing a router ID in a partial neighbor state.
+I then checked the interface and neighbor table again. The output showed Hello 10 / Dead 40, a neighbor count of 2, and both neighbors in FULL state (one shown as BDR and the other as DROTHER).
+
+![R5 post-correction timer values and both OSPF neighbors in FULL](./Photos/Screenshot%202026-11-14%20172956.png)
+
+**Result:** R5's timers matched the other routers, both expected OSPF adjacencies formed, and the router confirmed successful database loading through its syslog messages.
 
 ---
 
-## Troubleshooting issue 3 — Default route not available to the internal OSPF routers
+# 4. Troubleshooting issue 3 — Internal PCs could not reach the external destination
 
-### Symptom
+## Symptom
 
-Internal devices needed a path toward destinations outside the OSPF domain, including the ISP-facing side of the topology. An internal router needs a default route when no more-specific route exists for an external destination.
+PC1 and PC2 could not initially reach the external test destination **8.8.8.8**. PC2 returned a destination-host-unreachable message from its default gateway, 10.0.2.254.
 
-### Evidence
+![PC2 initial ping failure and unsuccessful traceroute](./Photos/Screenshot%202026-11-14%20173711.png)
 
-I inspected the routing table on the internal router and checked whether a default route was present:
+## Evidence
 
-```cisco
-show ip route
-```
+The initial test showed that PC2 could not complete the ping to 8.8.8.8. The traceroute repeatedly reached or reported the local gateway but did not complete the path to the destination.
 
-I also inspected the OSPF external link-state information:
+I checked the routing information and OSPF external route information on the routers. The internal routers needed a default route pointing toward the ISP-facing edge.
 
-```cisco
-show ip ospf database external
-```
+## Root cause
 
-The later routing-table output on R3 showed an OSPF external default route:
+The internal OSPF routers needed a default route for destinations that were not present as more-specific routes in their routing tables. R5 was the edge router connected toward the ISP, so it needed a static default route toward the upstream next hop and had to originate that route into OSPF.
 
-```
-O*E2 0.0.0.0/0
-```
+## Correction
 
-This indicates that R3 learned an OSPF external Type-5 default route.
-
-### Root cause
-
-The internal OSPF routers needed a default route originated from the edge router. R5 was configured to provide the upstream default route and advertise it into OSPF.
-
-### Correction
-
-On R5, I configured both parts:
-
-**1. Configure a static default route toward the upstream next hop:**
+On R5, I configured the static default route and advertised it through OSPF:
 
 ```cisco
 ip route 0.0.0.0 0.0.0.0 <upstream-next-hop>
-```
 
-**2. Originate the default route into OSPF:**
-
-```cisco
 router ospf 1
  default-information originate
 ```
 
-The placeholder `<upstream-next-hop>` represents the actual next-hop address used in the lab; it should be replaced with that configured address when reproducing the setup.
+The placeholder represents the upstream next-hop address configured in the lab.
 
-### Verification
+## Verification — Confirm the learned default route and test end-to-end reachability
 
-On an internal router such as R3, I checked:
+On R3, the routing table showed:
 
-```cisco
-show ip route
-show ip ospf database external
+```
+Gateway of last resort is 192.168.34.2 to network 0.0.0.0
+O*E2 0.0.0.0/0 via 192.168.34.2
 ```
 
-The `O*E2 0.0.0.0/0` entry confirms that the default route was learned through OSPF as an external route.
+This confirms that R3 learned an OSPF external Type-5 default route through R4.
 
-**Important distinction:** Seeing the default route in the routing table proves that OSPF distributed the route. It does not, by itself, prove that traffic can reach the internet. Full end-to-end verification also requires testing the path to the external destination and confirming that the upstream router has a valid route back to the internal networks.
+![R3 routing table showing the OSPF external default route](./Photos/Screenshot%202026-11-14%20174448.png)
+
+The final PC2 test shows successful replies from 8.8.8.8 and a completed traceroute. The visible path is:
+
+1. 10.0.2.254 — PC2's default gateway / R3
+2. 192.168.34.2 — R4
+3. 192.168.245.3 — R5
+4. 8.8.8.8 — external destination
+
+![PC2 successful ping and completed traceroute to 8.8.8.8](./Photos/Screenshot%202026-11-14%20174522.png)
+
+**Result:** The default route was distributed through OSPF, and PC2 successfully reached the external destination. The traceroute also showed the traffic traversing the expected internal routers and the edge router.
 
 ---
 
-## Additional verification — Inspecting the OSPF link-state database
+# 5. Additional verification — Inspecting the OSPF link-state database
 
-### Objective
+After restoring routing, I inspected the OSPF database to see the link-state information maintained by R3.
 
-After restoring the OSPF behavior, I inspected the link-state database to understand what information the routers were exchanging and how the default route was represented.
-
-### Evidence and commands
-
-I used the following commands:
+Commands used:
 
 ```cisco
 show ip ospf database
@@ -251,110 +260,40 @@ show ip ospf database external
 show ip route
 ```
 
-### What I examined
+The R3 output shows:
 
-- **Type 1 — Router LSA:** Describes a router's OSPF links and their characteristics within an area.
-- **Type 2 — Network LSA:** Describes a multi-access network and is generated by the DR when applicable. It is not expected on a point-to-point link.
-- **Type 5 — AS External LSA:** Advertises external routes into the OSPF domain. The externally originated default route is represented by a Type-5 LSA.
+- **Router Link States (Type 1):** Router LSAs for routers participating in Area 0.
+- **Net Link States (Type 2):** A Network LSA for the shared multi-access segment, originated by its DR.
+- **Type-5 AS External Link States:** An external LSA for 0.0.0.0, representing the default route originated into OSPF.
 
-### Verification
+The same screenshot also contains OSPF syslog messages showing the R3–R4 neighbor reaching FULL, followed by the LSDB output.
 
-I compared the LSDB information with the routing table. In particular, I looked for the external default route information and the corresponding OSPF-learned default route on the internal router.
+![R3 OSPF adjacency syslog and OSPF database showing Type 1, Type 2 and Type 5 LSAs](./Photos/Screenshot%202026-11-14%20180059.png)
 
-This helped connect three pieces of evidence: the route configured at the edge, the external LSA distributed by OSPF, and the route installed in the downstream router's routing table.
+This links the control-plane evidence to the forwarding result: OSPF adjacencies formed, the external default route was represented in the LSDB, and the internal routing table installed the default route.
 
 ---
 
-## Summary — Troubleshooting fault isolation and verification
+## 6. Troubleshooting summary
 
-| Issue | Evidence that isolated the fault | Root cause | Correction | Verification |
+| Fault / task | Evidence | Root cause | Correction | Verification |
 |---|---|---|---|---|
-| Missing 10.0.2.0/24 route | OSPF interface outputs showed BROADCAST on R3 and POINT-TO-POINT on the connected R4 end | OSPF network-type mismatch | Set R3 F2/0 to POINT-TO-POINT | OSPF interface type, neighbor state, routing table |
-| R5 neighbor adjacency | Hello/Dead values differed: 5/20 versus 10/40 | OSPF timer mismatch | Make timer values 10/40 on both ends | Neighbor state reached FULL |
-| Default route missing internally | Routing table and external LSDB inspection | Edge default route needed to be advertised into OSPF | Static default route plus `default-information originate` on R5 | `O*E2 0.0.0.0/0` learned on R3 |
-| Understanding OSPF advertisements | Router, Network, and External LSA database outputs | Needed to inspect what OSPF was distributing | No configuration change; performed LSDB inspection | Compared LSDB entries with routing-table entries |
+| R3 LAN 10.0.2.0/24 not learned remotely | R3 G0/1 was POINT-TO-POINT; R4 G0/1 was BROADCAST | OSPF network-type mismatch on R3–R4 transit link | Set R4 G0/1 to POINT-TO-POINT to match R3 | R4 syslog FULL → DOWN → LOADING → FULL; R5 learned 10.0.2.0/24 |
+| R5 adjacencies missing | R5 G0/0 showed Hello 5 / Dead 20 and zero neighbors; peers used 10/40 | OSPF timer mismatch | Set R5 G0/0 Hello 10 / Dead 40 | Syslog showed both neighbors LOADING → FULL; neighbor table showed two FULL peers |
+| PCs could not reach 8.8.8.8 | Initial ping/traceroute failed; later R3 showed O*E2 default route | No usable default route distributed to internal routers | Configure static default route on R5 and originate it into OSPF | R3 learned O*E2 0.0.0.0/0; PC2 ping and traceroute succeeded |
+| OSPF database inspection | R3 LSDB output | Verification task, not a fault | No configuration change | Type 1, Type 2 and Type 5 LSAs visible |
 
 ---
 
-## Skills practised
+## 7. What this lab demonstrates
 
-- Initial serial DCE/DTE identification and clock-rate configuration
-- Comparing interface and OSPF settings across both ends of a link
-- Troubleshooting OSPF network-type mismatches
-- Diagnosing Hello/Dead timer mismatches
-- Reading OSPF neighbor states and verifying FULL adjacency
-- Configuring a static default route and originating it into OSPF
-- Interpreting OSPF Type 1, Type 2, and Type 5 LSAs
-- Correlating the OSPF LSDB with installed routing-table entries
-- Following a repeatable symptom → evidence → root cause → correction → verification workflow
+- Comparing OSPF interface settings on both ends of a transit link
+- Identifying and correcting OSPF network-type mismatches
+- Reading OSPF adjacency syslog messages and understanding FULL, DOWN, and LOADING transitions
+- Diagnosing Hello/Dead interval mismatches
+- Verifying multiple OSPF neighbors after a timer correction
+- Advertising an edge default route into OSPF
+- Confirming route learning with the routing table and LSDB
+- Using ping and traceroute to verify actual end-to-end reachability
 
-## Evidence screenshots
-
-The screenshots are listed in capture-time order. They provide the original topology, diagnostic command outputs, configuration changes, and post-change verification.
-
-### 01. Troubleshooting evidence
-![Evidence 1](./Photos/Screenshot%202026-11-14%20170829.png)
-
-### 02. Troubleshooting evidence
-![Evidence 2](./Photos/Screenshot%202026-11-14%20171141.png)
-
-### 03. Troubleshooting evidence
-![Evidence 3](./Photos/Screenshot%202026-11-14%20171241.png)
-
-### 04. Troubleshooting evidence
-![Evidence 4](./Photos/Screenshot%202026-11-14%20171713.png)
-
-### 05. Troubleshooting evidence
-![Evidence 5](./Photos/Screenshot%202026-11-14%20172335.png)
-
-### 06. Troubleshooting evidence
-![Evidence 6](./Photos/Screenshot%202026-11-14%20172354.png)
-
-### 07. Troubleshooting evidence
-![Evidence 7](./Photos/Screenshot%202026-11-14%20172504.png)
-
-### 08. Troubleshooting evidence
-![Evidence 8](./Photos/Screenshot%202026-11-14%20172513.png)
-
-### 09. Troubleshooting evidence
-![Evidence 9](./Photos/Screenshot%202026-11-14%20172956.png)
-
-### 10. Troubleshooting evidence
-![Evidence 10](./Photos/Screenshot%202026-11-14%20173018.png)
-
-### 11. Troubleshooting evidence
-![Evidence 11](./Photos/Screenshot%202026-11-14%20173112.png)
-
-### 12. Troubleshooting evidence
-![Evidence 12](./Photos/Screenshot%202026-11-14%20173333.png)
-
-### 13. Troubleshooting evidence
-![Evidence 13](./Photos/Screenshot%202026-11-14%20173456.png)
-
-### 14. Troubleshooting evidence
-![Evidence 14](./Photos/Screenshot%202026-11-14%20173537.png)
-
-### 15. Troubleshooting evidence
-![Evidence 15](./Photos/Screenshot%202026-11-14%20173711.png)
-
-### 16. Troubleshooting evidence
-![Evidence 16](./Photos/Screenshot%202026-11-14%20174159.png)
-
-### 17. Troubleshooting evidence
-![Evidence 17](./Photos/Screenshot%202026-11-14%20174314.png)
-
-### 18. Troubleshooting evidence
-![Evidence 18](./Photos/Screenshot%202026-11-14%20174448.png)
-
-### 19. Troubleshooting evidence
-![Evidence 19](./Photos/Screenshot%202026-11-14%20174522.png)
-
-### 20. Troubleshooting evidence
-![Evidence 20](./Photos/Screenshot%202026-11-14%20180059.png)
-
-### 21. Troubleshooting evidence
-![Evidence 21](./Photos/Screenshot%202026-11-14%20181150.png)
-
-## Key takeaway
-
-The R1–R2 serial clock-rate work was an initial configuration task, not a fault investigation. The actual troubleshooting focused on the missing OSPF route, the neighbor timer mismatch, and default-route distribution. I used interface and OSPF outputs to isolate the causes, applied targeted corrections, and verified the results through neighbor state, routing-table entries, and LSDB contents.
+The most important lesson was to use device output as evidence. The syslog messages are especially useful because they record the adjacency transition at the moment the configuration changes. I did not treat a successful command entry as proof; I checked the neighbor state, routing table, LSDB, and final packet path.
