@@ -108,15 +108,18 @@ R4 was not forming the expected OSPF neighbor adjacency with R1 over GigabitEthe
 
 **Evidence and diagnosis**
 
-I checked R4's OSPF configuration with:
+Before changing the configuration, I checked both the OSPF process and its neighbor table:
 
 ```cisco
 show ip protocols
+show ip ospf neighbor
 ```
 
-The output listed GigabitEthernet0/0 under **Passive Interface(s)**. A passive OSPF interface can have its network advertised, but it does not send OSPF Hello packets on that interface. Therefore, it cannot form a neighbor adjacency over that link.
+The `show ip protocols` output listed GigabitEthernet0/0 under **Passive Interface(s)**. Then, `show ip ospf neighbor` returned no neighbor entries. This was important: it showed that R4 had no established OSPF neighbor on that link at that point.
 
-![R4 OSPF protocol output showing GigabitEthernet0/0 as passive](./Photos/51212.png)
+A passive OSPF interface can still have its connected network advertised, but it does not send OSPF Hello packets on that interface. Without Hello packets, R4 cannot discover and form an adjacency with R1 over GigabitEthernet0/0.
+
+![R4 before troubleshooting: G0/0 is passive and the OSPF neighbor table is empty](./Photos/51212.png)
 
 **Root cause**
 
@@ -135,16 +138,18 @@ router ospf 1
 
 **Verification**
 
-After the change, the router generated an OSPF adjacency message showing the neighbor moving from LOADING to FULL:
+After removing the passive setting, R4 generated this adjacency message:
 
 ```text
 %OSPF-5-ADJCHG: Process 1, Nbr 1.1.1.1
 on GigabitEthernet0/0 from LOADING to FULL
 ```
 
-The updated protocol output no longer lists GigabitEthernet0/0 as a passive interface.
+I then ran `show ip ospf neighbor` again. This time, the neighbor table displayed R1 (router ID `1.1.1.1`) in the **FULL/BDR** state on GigabitEthernet0/0.
 
-![R4 OSPF neighbor reaching FULL state](./Photos/Screenshot%202026-11-14%20210158.png)
+This before-and-after comparison confirms the result: before the fix, the neighbor table was empty; after the fix, R4 successfully formed an OSPF adjacency with R1.
+
+![R4 after troubleshooting: syslog confirms LOADING to FULL and show ip ospf neighbor displays R1 as FULL/BDR](./Photos/Screenshot%202026-11-14%20210158.png)
 
 ---
 
@@ -186,7 +191,24 @@ router ospf 1
 
 **Verification**
 
-The syslog output showed the R2 neighbor reaching FULL state on FastEthernet1/0. The updated `show ip protocols` output also showed `10.23.0.0/24` assigned to Area 0.
+Immediately after the area correction, R3 generated an adjacency-change message:
+
+```text
+%OSPF-5-ADJCHG: Process 1, Nbr 2.2.2.2
+on FastEthernet1/0 from LOADING to FULL
+```
+
+I also verified the result directly with:
+
+```cisco
+show ip ospf neighbor
+```
+
+The output listed neighbor `2.2.2.2` in the **FULL/BDR** state on FastEthernet1/0. The other listed neighbor, `5.5.5.5`, was also FULL/DR on FastEthernet3/0. The updated `show ip protocols` output showed `10.23.0.0 0.0.0.255 area 0`.
+
+This is the key before-and-after proof: the syslog records the adjacency transition, and the neighbor command confirms that R3 now has a stable FULL adjacency with R2.
+
+![R3 after troubleshooting: corrected area, adjacency syslog, and show ip ospf neighbor displaying R2 as FULL/BDR](./Photos/Screenshot%202026-11-14%20210623.png)
 
 ---
 
@@ -198,7 +220,23 @@ R5 was not receiving the expected `10.0.0.0/8` inter-area summary route.
 
 **Evidence and diagnosis**
 
-I inspected the OSPF configuration on R3 and found that the summary range was configured under Area 2:
+Before changing the summary configuration, I checked the routing table on R5:
+
+```cisco
+show ip route
+```
+
+The routing table showed the component networks as separate OSPF inter-area routes. In particular, R5 had individual entries for:
+
+- `10.12.0.0`
+- `10.14.0.0`
+- `10.23.0.0`
+
+These were being learned separately instead of appearing as the required single `10.0.0.0/8` summary route.
+
+![R5 before troubleshooting: routing table contains separate inter-area routes for the 10.x networks](./Photos/Screenshot%202026-11-14%20210647.png)
+
+I then inspected the OSPF configuration on R3 and found that the summary range was configured under Area 2:
 
 ```cisco
 area 2 range 10.0.0.0 255.0.0.0
@@ -226,26 +264,36 @@ router ospf 1
 
 **Verification on R5**
 
-I checked the routing table on R5 using:
+After correcting the range on R3, I ran `show ip route` on R5 again.
 
-```cisco
-show ip route
-```
-
-The output showed the expected inter-area route:
+The routing table changed from listing the component networks separately to showing the summarized route:
 
 ```text
+10.0.0.0/8 is variably subnetted, 2 subnets, 2 masks
 O IA 10.0.0.0/8 [110/2000] via 10.35.0.3
 ```
 
-- `O` indicates an OSPF-learned route.
-- `IA` indicates an OSPF inter-area route.
-- `10.0.0.0/8` is the expected summarized network.
-- `10.35.0.3` is the next hop shown in the routing table.
+- `O` indicates that the route was learned through OSPF.
+- `IA` identifies it as an OSPF inter-area route.
+- `10.0.0.0/8` is the summary prefix advertised to R5.
+- `110` is the OSPF administrative distance.
+- `2000` is the OSPF metric shown in this lab's routing table.
+- `10.35.0.3` is the next hop toward the summarizing router.
 
-This confirms that R5 received the expected summary route after the correction on R3.
+![R5 after troubleshooting: the routing table now contains the 10.0.0.0/8 inter-area summary route](./Photos/Screenshot%202026-11-14%20210740.png)
 
-![R5 routing table showing the 10.0.0.0/8 inter-area summary route](./Photos/Screenshot%202026-11-14%20210740.png)
+**Why summarization was useful here**
+
+Without summarization, R5 had to maintain separate inter-area route entries for the individual 10.x networks. With the Area 0 range configured on the ABR, those component prefixes could be represented to the other area by one broader `10.0.0.0/8` summary.
+
+In a larger multi-area network, this is useful because it:
+
+1. **Reduces routing-table entries:** routers in the receiving area can use one summary instead of carrying every component prefix separately.
+2. **Reduces inter-area routing information:** the ABR can advertise a summary Type 3 LSA rather than separate Type 3 LSAs for every covered component prefix.
+3. **Improves scalability:** adding more subnets inside the summarized block does not necessarily require every other area to learn each individual prefix.
+4. **Limits routing changes across areas:** changes to individual component routes can often remain within the source area instead of causing a separate inter-area advertisement for every subnet.
+
+Summarization must be planned carefully. The component networks should fit the chosen summary range, and the network design must account for unused address space inside that range so traffic is not attracted toward a summary when no valid destination exists. In this lab, the purpose was to replace the separate 10.x inter-area entries visible on R5 with the required `10.0.0.0/8` summary route.
 
 ---
 
