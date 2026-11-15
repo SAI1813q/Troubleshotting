@@ -5,5 +5,6 @@ A collection of hands-on Cisco Packet Tracer troubleshooting exercises documenti
 ## Labs
 
 - [OSPF Multi-Router Troubleshooting](./OSPF/README.md) — serial DCE clocking, OSPF network-type and timer mismatches, default-route origination, and LSDB verification.
+- [Inter-VLAN Routing Troubleshooting](./INTER%20VLAN/README.md) — incorrect VLAN membership, router subinterface addressing, switch trunk configuration, and PC ping verification.
 
 More scenarios will be added as they are completed.
