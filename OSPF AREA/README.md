@@ -1,10 +1,10 @@
-# OSPF Multi-Area Troubleshooting Lab
+# 🌐 OSPF Multi-Area Troubleshooting Lab
 
 A practical Cisco Packet Tracer troubleshooting exercise focused on diagnosing and correcting OSPF issues across multiple areas. The lab scenario states that routers are not receiving the expected OSPF routes and that R5 is missing the expected `10.0.0.0/8` summary route.
 
 The work below documents the issues found, the evidence used to identify them, the configuration changes made, and the verification performed. Screenshots are from the `Photos` folder in this directory.
 
-## Lab overview
+## 📋 Lab Overview
 
 - **Platform:** Cisco Packet Tracer
 - **Routing protocol:** OSPF, process ID 1
@@ -12,7 +12,7 @@ The work below documents the issues found, the evidence used to identify them, t
 - **Areas:** Area 0 (backbone), Area 1 and Area 2
 - **Main objective:** Restore the required OSPF advertisements and adjacencies, and ensure R5 learns the expected inter-area summary route.
 
-### Original topology and task
+### 🗺️ Original Topology and Task
 
 The topology is divided into three OSPF areas. The task specifically identifies missing OSPF routes and the missing `10.0.0.0/8` summary route on R5.
 
@@ -20,13 +20,13 @@ The topology is divided into three OSPF areas. The task specifically identifies 
 
 ---
 
-## Troubleshooting workflow
+## 🔍 Troubleshooting Workflow
 
 Each issue is documented using the same sequence:
 
 **Symptom → Evidence → Root cause → Correction → Verification**
 
-### 1. R1 — Loopback address not advertised into OSPF
+### 🧩 1. R1 — Loopback Address Not Advertised into OSPF
 
 **Symptom**
 
@@ -61,7 +61,7 @@ The updated `show ip protocols` output displays `1.1.1.1 0.0.0.0 area 0` under R
 
 ---
 
-### 2. R2 — FastEthernet2/0 administratively down
+### 🔌 2. R2 — FastEthernet2/0 Administratively Down
 
 **Symptom**
 
@@ -100,7 +100,7 @@ The interface status changed from administratively down/down to an operational s
 
 ---
 
-### 3. R4 — OSPF adjacency prevented by a passive interface
+### 🔗 3. R4 — OSPF Adjacency Prevented by a Passive Interface
 
 **Symptom**
 
@@ -153,7 +153,7 @@ This before-and-after comparison confirms the result: before the fix, the neighb
 
 ---
 
-### 4. R3 — OSPF area mismatch on the R2–R3 link
+### ⚠️ 4. R3 — OSPF Area Mismatch on the R2–R3 Link
 
 **Symptom**
 
@@ -212,7 +212,7 @@ This is the key before-and-after proof: the syslog records the adjacency transit
 
 ---
 
-### 5. R3 — Summary range configured under the wrong OSPF area
+### 🧮 5. R3 — Summary Range Configured Under the Wrong OSPF Area
 
 **Symptom**
 
@@ -282,7 +282,7 @@ O IA 10.0.0.0/8 [110/2000] via 10.35.0.3
 
 ![R5 after troubleshooting: the routing table now contains the 10.0.0.0/8 inter-area summary route](./Photos/Screenshot%202026-11-14%20210740.png)
 
-**Why summarization was useful here**
+**💡 Why Summarization Was Useful Here**
 
 Without summarization, R5 had to maintain separate inter-area route entries for the individual 10.x networks. With the Area 0 range configured on the ABR, those component prefixes could be represented to the other area by one broader `10.0.0.0/8` summary.
 
@@ -297,7 +297,7 @@ Summarization must be planned carefully. The component networks should fit the c
 
 ---
 
-## Final verification and outcome
+## ✅ Final Verification and Outcome
 
 The troubleshooting exercise covered five configuration issues across R1, R2, R3 and R4, followed by route verification on R5.
 
@@ -309,7 +309,7 @@ The troubleshooting exercise covered five configuration issues across R1, R2, R3
 | R3 | R2–R3 network assigned to the wrong area | Syslog identifies mismatch; neighbor 2.2.2.2 reaches FULL after correction |
 | R3 | Summary range configured under Area 2 instead of Area 0 | R5 routing table shows O IA 10.0.0.0/8 |
 
-## Key troubleshooting skills demonstrated
+## 🛠️ Key Troubleshooting Skills Demonstrated
 
 - Interpreting OSPF syslog messages to identify adjacency and area mismatches.
 - Checking interface states with `show ip interface brief`.
@@ -319,7 +319,7 @@ The troubleshooting exercise covered five configuration issues across R1, R2, R3
 - Configuring inter-area route summarization on an ABR.
 - Verifying learned routes and next hops using `show ip route`.
 
-## Lab evidence
+## 📸 Lab Evidence
 
 All screenshots used in this walkthrough are stored in the [Photos](./Photos/) directory.
 
