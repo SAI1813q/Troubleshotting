@@ -121,8 +121,6 @@ ipconfig /all
 
 ![PC – successful DHCP result](./Photos/Screenshot%202026-11-16%20132049.png)
 
-![Additional DHCP verification](./Photos/Screenshot%202026-11-16%20132157.png)
-
 ---
 
 ## 3. 🔁 PAT – Incorrect ACL used by the NAT rule
@@ -141,7 +139,11 @@ show running-config | include ip nat
 show access-lists
 ```
 
-**Evidence**
+**PC evidence – before troubleshooting**
+
+![PC – before PAT correction, no successful PAT traffic yet](./Photos/Screenshot%202026-11-16%20132157.png)
+
+**Router investigation evidence**
 
 ![R1 – NAT statistics before generating test traffic](./Photos/Screenshot%202026-11-16%20132233.png)
 
@@ -167,7 +169,9 @@ The ACL reference and interface should match the configuration visible in the R1
 After changing the PAT rule, I checked again and initially no translations were displayed for the `192.168.2.0` traffic. I then pinged `30.0.0.100` from the PC to generate traffic through the router. After generating traffic, I checked the NAT translations again and the translations appeared.
 
 
-![PC – ping to 30.0.0.100](./Photos/Screenshot%202026-11-16%20133335.png)
+**PC evidence – after troubleshooting**
+
+![PC – ping to 30.0.0.100 after correcting PAT](./Photos/Screenshot%202026-11-16%20133335.png)
 
 ![R1 – translations after the ping generated traffic](./Photos/Screenshot%202026-11-16%20133533.png)
 
