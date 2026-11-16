@@ -20,8 +20,15 @@ The scenarios cover RIP route advertisement, DHCP relay, PAT, DHCP-provided DNS 
 ### Symptom
 R2 and R3 were not receiving the expected RIP routes from R1.
 
-### Investigation
+### 🔎 Investigation
 I first checked R2 and R3 because both routers were missing routes. I then traced the issue back to R1 and inspected its RIP configuration. The problem was a passive interface on R1.
+
+**Diagnostic commands**
+```cisco
+show ip route
+show ip protocols
+show running-config | section router rip
+```
 
 A passive RIP interface can still receive routing updates, but it does not send RIP updates out of that interface. This explains why R1 could continue learning routes while not advertising routes to its neighbor over the passive interface.
 
@@ -38,11 +45,23 @@ A passive RIP interface can still receive routing updates, but it does not send 
 ### Root cause
 The relevant R1 interface was configured as passive under RIP, preventing R1 from advertising RIP updates through that interface.
 
-### Correction
-Removed the passive-interface setting from the R1 inter-router interface. The exact interface and command are shown in the configuration evidence above.
+### 🛠️ Correction
+Removed the passive-interface setting from the R1 inter-router interface:
 
-### Verification
+```cisco
+router rip
+ no passive-interface <R1-inter-router-interface>
+```
+
+Use the exact interface shown in the R1 configuration screenshot; I have kept the interface as a placeholder here rather than guessing it.
+
+### ✅ Verification
 Checked the routing information again after the correction to confirm that the missing RIP routes were being learned.
+
+```cisco
+show ip route
+show ip protocols
+```
 
 
 ![Post-troubleshooting RIP evidence](./Photos/Screenshot%202026-11-16%20131305.png)
@@ -54,8 +73,19 @@ Checked the routing information again after the correction to confirm that the m
 ### Symptom
 The hosts behind R2 were not receiving DHCP addresses.
 
-### Investigation
+### 🔎 Investigation
 I checked the PC before and after attempting DHCP. Then I inspected R2's G0/0 interface, which acts as the gateway interface for that LAN. The interface did not have an IP helper address configured.
+
+**Diagnostic commands**
+```text
+ipconfig
+ipconfig /all
+```
+
+```cisco
+show ip interface g0/0
+show running-config interface g0/0
+```
 
 **Evidence**
 
@@ -66,21 +96,27 @@ I checked the PC before and after attempting DHCP. Then I inspected R2's G0/0 in
 ### Root cause
 R2 G0/0 was missing the `ip helper-address` configuration. DHCP client discovery messages are broadcasts and need a relay on the gateway interface to reach a DHCP server on another network.
 
-### Correction
+### 🛠️ Correction
 Configured the DHCP relay address on R2 G0/0:
 
 ```cisco
 interface g0/0
- ip helper-address <DHCP-server-address>
+ ip helper-address <DHCP-server-IP>
 ```
 
-The configured address is visible in the lab evidence.
+The helper-address IP is left as a placeholder rather than inventing an address; use the exact value visible in the configuration screenshot.
 
 
 ![R2 – helper-address configuration](./Photos/Screenshot%202026-11-16%20132020.png)
 
-### Verification
+### ✅ Verification
 Retested DHCP from the PC. The host successfully obtained an IP configuration after the helper address was added.
+
+```text
+ipconfig /release
+ipconfig /renew
+ipconfig /all
+```
 
 
 ![PC – successful DHCP result](./Photos/Screenshot%202026-11-16%20132049.png)
@@ -94,8 +130,16 @@ Retested DHCP from the PC. The host successfully obtained an IP configuration af
 ### Symptom
 PAT was configured but translations were not appearing for the inside traffic.
 
-### Investigation
+### 🔎 Investigation
 I checked the NAT statistics and inspected the PAT configuration. The PAT rule was using ACL 2, which was the incorrect ACL reference for the intended inside traffic.
+
+**Diagnostic commands**
+```cisco
+show ip nat statistics
+show ip nat translations
+show running-config | include ip nat
+show access-lists
+```
 
 **Evidence**
 
@@ -106,8 +150,15 @@ I checked the NAT statistics and inspected the PAT configuration. The PAT rule w
 ### Root cause
 The PAT overload rule referenced ACL 2 instead of the ACL intended to match the inside network.
 
-### Correction
-Corrected the ACL reference in the PAT configuration. The actual command and ACL configuration are shown in the router evidence.
+### 🛠️ Correction
+Corrected the ACL reference in the PAT overload rule. The rule was changed from ACL 2 to ACL 1:
+
+```cisco
+no ip nat inside source list 2 interface g0/1 overload
+ip nat inside source list 1 interface g0/1 overload
+```
+
+The ACL reference and interface should match the configuration visible in the R1 screenshot.
 
 
 ![R1 – corrected PAT configuration](./Photos/Screenshot%202026-11-16%20133354.png)
@@ -122,6 +173,16 @@ After changing the PAT rule, I checked again and initially no translations were 
 
 **Troubleshooting takeaway:** A dynamic PAT translation is created when matching traffic is generated. An empty translation table before the test traffic does not, by itself, mean the corrected PAT rule is failing.
 
+**Verification commands**
+```cisco
+show ip nat translations
+show ip nat statistics
+```
+
+```text
+ping 30.0.0.100
+```
+
 ---
 
 ## 4. 🧩 DNS – DHCP clients not receiving a DNS server
@@ -129,8 +190,13 @@ After changing the PAT rule, I checked again and initially no translations were 
 ### Symptom
 The PC did not have a DNS server address in its IP configuration, so hostname resolution was not working.
 
-### Investigation
+### 🔎 Investigation
 I checked `ipconfig /all` on the PC and confirmed that the DNS server field was missing. I also tested DNS by trying to ping the server by its hostname.
+
+```text
+ipconfig /all
+ping srv1
+```
 
 **Evidence**
 
@@ -141,21 +207,28 @@ I checked `ipconfig /all` on the PC and confirmed that the DNS server field was 
 ### Root cause
 The DHCP pool on R1 did not include the DNS server option.
 
-### Correction
+### 🛠️ Correction
 Added the DNS server address to the relevant DHCP pool on R1:
 
 ```cisco
-ip dhcp pool <pool-name>
+ip dhcp pool <R1-DHCP-pool-name>
  dns-server 30.0.0.100
 ```
 
-The pool and command are visible in the configuration evidence.
+The pool name is left as a placeholder because it should be copied exactly from the R1 configuration screenshot.
 
 
 ![R1 – adding the DNS server option](./Photos/Screenshot%202026-11-16%20133914.png)
 
-### Verification
+### ✅ Verification
 Released and renewed the PC's DHCP lease so it could receive the updated DHCP options. Then I checked the configuration and pinged `srv1` by hostname successfully.
+
+```text
+ipconfig /release
+ipconfig /renew
+ipconfig /all
+ping srv1
+```
 
 
 ![PC – release/renew and hostname ping to srv1](./Photos/Screenshot%202026-11-16%20134156.png)
@@ -167,8 +240,13 @@ Released and renewed the PC's DHCP lease so it could receive the updated DHCP op
 ### Symptom
 An SSH login attempt from PC1 to R1 was rejected.
 
-### Investigation
+### 🔎 Investigation
 I attempted to connect to R1 from PC1 and observed that the connection failed. I then checked the VTY configuration on R1 and found that the transport input setting permitted Telnet.
+
+**Diagnostic commands**
+```cisco
+show running-config | section line vty
+```
 
 **Evidence**
 
@@ -179,21 +257,25 @@ I attempted to connect to R1 from PC1 and observed that the connection failed. I
 ### Root cause
 The VTY lines were configured with Telnet as the permitted transport, rather than SSH.
 
-### Correction
+### 🛠️ Correction
 Changed the VTY transport setting to permit SSH:
 
 ```cisco
-line vty <line-range>
+line vty <VTY-line-range>
  transport input ssh
 ```
 
-The configured VTY line range is visible in the router evidence.
+The exact VTY line range is left as a placeholder; use the range shown in the R1 configuration screenshot.
 
 
 ![R1 – corrected VTY transport setting](./Photos/Screenshot%202026-11-16%20134400.png)
 
-### Verification
+### ✅ Verification
 Retried the SSH connection from PC1. This time the login succeeded and I reached the R1 command-line interface.
+
+```text
+ssh -l <username> <R1-management-IP>
+```
 
 
 ![PC1 – successful SSH login to R1](./Photos/Screenshot%202026-11-16%20134433.png)
